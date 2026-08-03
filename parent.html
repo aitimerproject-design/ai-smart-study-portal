@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Parent Portal - Live Monitoring</title>
+    <link rel="stylesheet" href="style.css">
+    
+    <!-- Firebase SDKs -->
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+
+    <!-- Chart.js Library -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+
+    <div class="container">
+        <!-- HEADER -->
+        <header class="header">
+            <h1>👨‍👩‍👧 Parent Dashboard</h1>
+            <p>Live Realtime Student Monitoring & AI Status</p>
+            <div class="status" id="parentDeviceStatus">🟢 Live Monitoring Active</div>
+        </header>
+
+        <!-- DASHBOARD METRICS -->
+        <div class="dashboard">
+            <div class="card">
+                <h3>👤 Student Name</h3>
+                <p id="parentStudentName">Loading...</p>
+            </div>
+            <div class="card">
+                <h3>⏱ Today's Study Time</h3>
+                <p id="parentStudyTime">00:00:00</p>
+            </div>
+            <div class="card">
+                <h3>🔥 Focus Sessions</h3>
+                <p id="parentFocusSessions">0 Sessions</p>
+            </div>
+            <div class="card" style="border: 2px solid #3b82f6; background: #0f172a;">
+                <h3>🤖 AI Face Status</h3>
+                <p id="parentAIFaceStatusText" style="color: #16a34a; font-weight: bold; font-size: 1.2rem;">Checking...</p>
+            </div>
+        </div>
+
+        <!-- LIVE CAMERA SNAPSHOT -->
+        <div class="card" style="text-align: center;">
+            <h2>📸 Latest Camera Snapshot</h2>
+            <div style="margin: 15px auto; max-width: 320px; border-radius: 12px; overflow: hidden; border: 2px solid #334155; background: #1e293b; min-height: 240px; display: flex; align-items: center; justify-content: center;">
+                <img id="parentSnapshotImg" src="" alt="No snapshot captured yet" style="width: 100%; height: auto; display: none;">
+                <p id="noSnapshotText" style="color: #94a3b8; padding: 20px;">Waiting for camera snapshot...</p>
+            </div>
+            <p style="color: #64748b; font-size: 14px;">Last Captured Time: <strong id="parentSnapshotTime">--:--</strong></p>
+        </div>
+
+        <!-- GOAL PROGRESS -->
+        <div class="card">
+            <h2>🎯 Daily Study Goal Progress</h2>
+            <div class="progress-bar">
+                <div class="progress-fill" id="parentProgressFill" style="width: 0%;"></div>
+            </div>
+            <p id="parentProgressText" style="text-align: center; margin-top: 10px; font-weight: bold;">0% Completed</p>
+        </div>
+
+        <!-- REALTIME STUDY GRAPH -->
+        <div class="card">
+            <h2>📊 Live Student Study Activity Graph</h2>
+            <div class="chart-wrapper" style="position: relative; height: 300px;">
+                <canvas id="parentStudyChart"></canvas>
+            </div>
+        </div>
+
+        <!-- TASKS STATUS -->
+        <div class="card">
+            <h2>📅 Assigned Tasks & Progress</h2>
+            <div id="parentTaskList">
+                <p style="color:#64748b;">No active tasks.</p>
+            </div>
+        </div>
+
+        <!-- ALERT & NOTIFICATION LOGS -->
+        <div class="card">
+            <h2>🔔 Live Alerts & Logs</h2>
+            <div id="parentNotificationList" style="max-height: 200px; overflow-y: auto;">
+                <p style="color:#64748b;">No recent alerts.</p>
+            </div>
+        </div>
+
+        <!-- FOOTER -->
+        <footer>
+            <p>Parent Dashboard Portal 🚀</p>
+        </footer>
+    </div>
+
+    <script src="parent.js"></script>
+</body>
+</html>

@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login & Signup - AI Timer Portal</title>
+    <link rel="stylesheet" href="style.css">
+
+    <!-- Firebase Core & Auth SDKs -->
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+</head>
+<body style="display: flex; justify-content: center; align-items: center; min-height: 100vh; background-color: #0f172a; color: #f8fafc;">
+
+    <div class="card" style="width: 100%; max-width: 400px; padding: 25px; border-radius: 12px; background: #1e293b; box-shadow: 0 10px 25px rgba(0,0,0,0.5);">
+        
+        <!-- HEADER -->
+        <h2 id="authTitle" style="text-align: center; margin-bottom: 5px;">🎓 Student Login</h2>
+        <p style="text-align: center; color: #94a3b8; font-size: 14px; margin-bottom: 20px;">AI Timer Portal Access</p>
+
+        <!-- ROLE TOGGLE BUTTONS -->
+        <div style="display: flex; gap: 10px; margin-bottom: 20px;">
+            <button id="btnStudentRole" class="start" style="flex: 1; padding: 8px;" onclick="switchRole('student')">Student</button>
+            <button id="btnParentRole" class="reset" style="flex: 1; padding: 8px; opacity: 0.6;" onclick="switchRole('parent')">Parent</button>
+        </div>
+
+        <!-- FORM INPUTS -->
+        <div style="display: flex; flex-direction: column; gap: 12px;">
+            <input type="email" id="authEmail" placeholder="Enter Email" style="padding: 12px; border-radius: 6px; border: 1px solid #334155; background: #0f172a; color: white;">
+            <input type="password" id="authPassword" placeholder="Enter Password" style="padding: 12px; border-radius: 6px; border: 1px solid #334155; background: #0f172a; color: white;">
+
+            <button id="btnSubmit" class="start" style="padding: 12px; font-weight: bold; margin-top: 10px;" onclick="handleAuthSubmit()">Login</button>
+        </div>
+
+        <!-- TOGGLE LOGIN / SIGNUP -->
+        <p style="text-align: center; margin-top: 15px; font-size: 14px; color: #94a3b8;">
+            <span id="toggleText">Don't have an account?</span> 
+            <a href="#" id="toggleLink" style="color: #38bdf8; font-weight: bold; text-decoration: none;" onclick="toggleAuthMode()">Sign Up</a>
+        </p>
+    </div>
+
+    <script src="auth.js"></script>
+</body>
+</html>

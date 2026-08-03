@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Student Dashboard - Study Portal</title>
+    <link rel="stylesheet" href="style.css">
+    
+    <!-- Firebase SDKs -->
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+
+    <!-- Face Detection Library (tracking.js) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tracking.js/1.1.3/tracking-min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tracking.js/1.1.3/data/face-min.js"></script>
+
+    <!-- Chart.js Library -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+
+    <div class="container">
+        <!-- HEADER -->
+        <header class="header">
+            <h1>🎓 Student Study Portal</h1>
+            <p>Smart Time Management & Task Tracker</p>
+            <div class="status">🟢 Active Student Session</div>
+        </header>
+
+        <!-- PROFILE & SETTINGS -->
+        <div class="card">
+            <h2>👤 Student Profile</h2>
+            <div style="display: flex; gap: 15px; flex-wrap: wrap; align-items: center;">
+                <input type="text" id="inputStudentName" placeholder="Enter Your Name">
+                <input type="number" id="inputDailyGoal" placeholder="Daily Goal (Minutes)">
+                <button class="save" onclick="saveProfile()">Save Profile</button>
+            </div>
+            <p style="margin-top: 10px; color: #64748b;">Current Name: <strong id="displayName">Student</strong> | Goal: <strong id="displayGoal">120</strong> mins</p>
+        </div>
+
+        <!-- DASHBOARD METRICS -->
+        <div class="dashboard">
+            <div class="card">
+                <h3>👤 Student Name</h3>
+                <p id="studentCardName">Student</p>
+            </div>
+            <div class="card">
+                <h3>⏱ Today's Study Time</h3>
+                <p id="todayStudyTime">00:00:00</p>
+            </div>
+            <div class="card">
+                <h3>🔥 Focus Sessions</h3>
+                <p id="focusSessions">0 Sessions</p>
+            </div>
+        </div>
+
+        <!-- WEBCAM SECTION -->
+        <div class="card" style="text-align: center;">
+            <h2>📷 Live Study Camera</h2>
+            <div style="position: relative; display: inline-block; border-radius: 12px; overflow: hidden; border: 2px solid #334155; background: #0f172a; max-width: 100%;">
+                <video id="webcamVideo" autoplay playsinline muted style="width: 100%; max-width: 480px; height: auto; transform: scaleX(-1); display: block;"></video>
+                <canvas id="snapshotCanvas" style="display: none;"></canvas>
+            </div>
+            <div style="margin-top: 10px;">
+                <button class="start" style="padding: 6px 15px; font-size: 13px;" onclick="startWebcam()">🎥 Restart Camera</button>
+            </div>
+        </div>
+
+        <!-- MAIN TIMER SECTION -->
+        <div class="card timer-card">
+            <h2>⏱️ Focus Timer</h2>
+            <div id="timer">00:00:00</div>
+            <div class="buttons">
+                <button class="start" onclick="startTimer()">▶ Start</button>
+                <button class="pause" onclick="pauseTimer()">⏸ Pause</button>
+                <button class="reset" onclick="resetTimer()">🔄 Reset</button>
+            </div>
+        </div>
+
+        <!-- GOAL PROGRESS BAR -->
+        <div class="card">
+            <h2>🎯 Today's Goal Progress</h2>
+            <div class="progress-bar">
+                <div class="progress-fill" id="progressFill" style="width: 0%;"></div>
+            </div>
+            <p id="progressText" style="text-align: center; margin-top: 10px; font-weight: bold;">0% Completed</p>
+        </div>
+
+        <!-- REALTIME STUDY GRAPH -->
+        <div class="card">
+            <h2>📊 Realtime Study Activity Graph</h2>
+            <div class="chart-wrapper" style="position: relative; height: 300px;">
+                <canvas id="studentStudyChart"></canvas>
+            </div>
+        </div>
+
+        <!-- TASK MANAGEMENT -->
+        <div class="card">
+            <h2>📅 Task Manager</h2>
+            <div style="display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 15px; align-items: center;">
+                <input type="text" id="taskNameInput" placeholder="Task Name (e.g. Physics Revision)" style="flex: 2; min-width: 200px;">
+                
+                <!-- 📅 CALENDAR DATE PICKER ADDED -->
+                <input type="date" id="taskDateInput" style="flex: 1; min-width: 130px;">
+                
+                <input type="time" id="taskStartTimeInput" style="flex: 1; min-width: 100px;">
+                <input type="time" id="taskEndTimeInput" style="flex: 1; min-width: 100px;">
+                <button class="save" onclick="createNewTask()" style="padding: 10px 20px;">➕ Add Task</button>
+            </div>
+
+            <div id="taskList">
+                <p style="color:#64748b;">No tasks added yet.</p>
+            </div>
+        </div>
+
+        <!-- FOOTER -->
+        <footer>
+            <p>Student Dashboard 🚀</p>
+        </footer>
+    </div>
+
+    <!-- MISSED TASK WARNING MODAL -->
+    <div class="missed-popup" id="warningModal" style="display: none;">
+        <div class="popup-box">
+            <h2>⚠️ Task Missed!</h2>
+            <p id="modalMsg" style="color: #475569; margin: 15px 0;">You missed a scheduled task!</p>
+            <button class="reset" onclick="closeModal()">Dismiss</button>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
