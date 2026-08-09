@@ -1,5 +1,5 @@
 // =========================================================
-// AI TIMER - PARENT ENGINE (FIXED REALTIME SNAPSHOT & FOCUS)
+// AI TIMER - PARENT ENGINE (COMPLETE FIXED VERSION)
 // =========================================================
 
 const firebaseConfig = {
@@ -45,19 +45,53 @@ function initParentChart() {
     });
 }
 
-// Live Firebase Realtime Listener
+// Helper to reliably show/hide snapshot
+function updateCameraSnapshot(snapshotVal) {
+    const imgEl = document.getElementById("parentSnapshotImg");
+    const txtEl = document.getElementById("noSnapshotText");
+
+    if (snapshotVal && typeof snapshotVal === "string" && snapshotVal.trim().length > 20) {
+        let formattedSrc = snapshotVal.trim();
+        // Ensure standard Base64 image prefix
+        if (!formattedSrc.startsWith("data:image")) {
+            formattedSrc = "data:image/jpeg;base64," + formattedSrc;
+        }
+
+        if (imgEl) {
+            imgEl.src = formattedSrc;
+            imgEl.style.display = "block";
+        }
+        if (txtEl) {
+            txtEl.style.display = "none";
+        }
+    } else {
+        if (imgEl) imgEl.style.display = "none";
+        if (txtEl) txtEl.style.display = "block";
+    }
+}
+
 function listenToStudentDashboard() {
-    // 🟢 Continuous Listener on studentData
+    // 1. Direct Realtime Listener for Camera Snapshot
+    db.ref("studentData/lastSnapshot").on("value", (snap) => {
+        updateCameraSnapshot(snap.val());
+    });
+
+    // 2. Main Database Realtime Listener
     db.ref("studentData").on("value", (snapshot) => {
         const data = snapshot.val();
         if (!data) return;
 
-        // 1. Student Name Sync
+        // Backup Snapshot Check
+        if (data.lastSnapshot) {
+            updateCameraSnapshot(data.lastSnapshot);
+        }
+
+        // Student Name
         if (document.getElementById("parentStudentName")) {
             document.getElementById("parentStudentName").innerText = data.studentName || "Student";
         }
 
-        // 2. Study Time Sync
+        // Study Time
         const studySeconds = Number(data.todayStudySeconds) || Number(data.studyTimeSeconds) || 0;
         let hrs = Math.floor(studySeconds / 3600);
         let mins = Math.floor((studySeconds % 3600) / 60);
@@ -70,12 +104,12 @@ function listenToStudentDashboard() {
                 String(secs).padStart(2, "0");
         }
 
-        // 3. Focus Sessions Sync (Direct Sync Fix)
+        // Focus Sessions
         if (document.getElementById("parentFocusSessions")) {
             document.getElementById("parentFocusSessions").innerText = (data.focusSessions || 0) + " Sessions";
         }
 
-        // 4. AI Face Status Indicator (Smart Sync for Boolean & Text)
+        // AI Status Indicator
         const aiStatusEl = document.getElementById("parentAIFaceStatusText");
         if (aiStatusEl) {
             let statusText = data.aiStatus || "";
@@ -83,7 +117,7 @@ function listenToStudentDashboard() {
             if (data.cameraActive === false) {
                 aiStatusEl.innerText = "⚠️ Camera Off";
                 aiStatusEl.style.color = "#f59e0b";
-            } else if (data.faceDetected === true || statusText.toLowerCase().includes("present") || statusText.toLowerCase().includes("focused")) {
+            } else if (data.faceDetected === true || statusText.toLowerCase().includes("present") || statusText.toLowerCase().includes("active")) {
                 aiStatusEl.innerText = "🟢 Active / Present";
                 aiStatusEl.style.color = "#16a34a";
             } else if (data.faceDetected === false || statusText.toLowerCase().includes("away") || statusText.toLowerCase().includes("distracted")) {
@@ -95,24 +129,13 @@ function listenToStudentDashboard() {
             }
         }
 
-        // 5. Live Photo Snapshot Update
-        const imgEl = document.getElementById("parentSnapshotImg");
-        const txtEl = document.getElementById("noSnapshotText");
+        // Snapshot Image Time Update
         const timeEl = document.getElementById("parentSnapshotTime");
-
-        if (data.lastSnapshot && data.lastSnapshot.length > 50) {
-            if (imgEl) {
-                imgEl.src = data.lastSnapshot;
-                imgEl.style.display = "block";
-            }
-            if (txtEl) txtEl.style.display = "none";
-            if (timeEl) timeEl.innerText = data.lastSnapshotTime || "Just now";
-        } else {
-            if (imgEl) imgEl.style.display = "none";
-            if (txtEl) txtEl.style.display = "block";
+        if (timeEl && data.lastSnapshotTime) {
+            timeEl.innerText = data.lastSnapshotTime;
         }
 
-        // 6. Goal Progress
+        // Progress Bar
         const dailyGoalMins = Number(data.dailyGoal) || 120;
         const goalSeconds = dailyGoalMins * 60;
         let percent = goalSeconds > 0 ? Math.min(100, Math.floor((studySeconds / goalSeconds) * 100)) : 0;
@@ -124,14 +147,14 @@ function listenToStudentDashboard() {
             document.getElementById("parentProgressText").innerText = percent + "% Completed";
         }
 
-        // 7. Graph Sync
+        // Graph
         if (parentChart && data.chartLabels && data.chartData) {
             parentChart.data.labels = data.chartLabels;
             parentChart.data.datasets[0].data = data.chartData;
-            parentChart.update('none'); // Safe smooth update without lag
+            parentChart.update('none');
         }
 
-        // 8. Task & Log Sync
+        // Task & Alerts Log
         renderParentTasks(data.tasks || []);
         renderParentNotifications(data.notifications || []);
     });
@@ -147,14 +170,12 @@ function renderParentTasks(tasks) {
     }
 
     container.innerHTML = "";
-    
-    // Support array or object tasks
     const taskArray = Array.isArray(tasks) ? tasks : Object.values(tasks);
 
     taskArray.forEach((task) => {
         if (!task) return;
         let div = document.createElement("div");
-        let status = (task.status || "upcoming").toLowerCase();
+        let status = String(task.status || "upcoming").toLowerCase();
         div.className = "task-item " + status;
 
         div.innerHTML = `
@@ -176,7 +197,6 @@ function renderParentNotifications(notifications) {
     }
 
     box.innerHTML = "";
-    
     const notifArray = Array.isArray(notifications) ? notifications : Object.values(notifications);
 
     notifArray.slice().reverse().forEach((notif) => {
