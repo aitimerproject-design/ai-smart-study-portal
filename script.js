@@ -1,5 +1,5 @@
 // =========================================================
-// AI TIMER - STUDENT ENGINE (COMPLETE FIXED VERSION)
+// GURU AI TIMER - STUDENT ENGINE (WITH FACE-API.JS RECOGNITION)
 // =========================================================
 
 const firebaseConfig = {
@@ -17,34 +17,222 @@ if (!firebase.apps.length) {
 }
 const db = firebase.database();
 
+// --- GLOBAL STATE ---
 let timerInterval = null;
+let aiLoopInterval = null;
 let isRunning = false;
+let currentSessionSeconds = 0;
+let currentSessionStartTime = null;
 let webcamStream = null;
-let trackerTask = null;
 let studyChart = null;
 
-// --- HEAD TILT BUFFER VARIABLES ---
+// --- FACE-API.JS STATE ---
+let isModelsLoaded = false;
+let registeredDescriptor = JSON.parse(localStorage.getItem("registeredFaceDescriptor")) || null;
+const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model/';
+
+// --- HEAD TILT & READING BUFFER (FIXED FOR HEAD DOWN / WRITING) ---
 let gracePeriodCounter = 0; 
-const MAX_GRACE_TICKS = 4; 
+const MAX_GRACE_TICKS = 35; // Badha kar ~20-25 seconds kar diya hai padhne/likhne ke liye
+
+// --- DYNAMIC PARENT AWAY ALERT TRACKER ---
+let awayStartTime = null;
+let lastAlertMinute = 0; 
+
+function getTodayDateString() {
+    const d = new Date();
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
+
+function normalizeTaskStatus(status) {
+    return String(status || "upcoming").toLowerCase().trim();
+}
+
+function getCleanHistoryArray(historyData) {
+    if (!historyData) return [];
+    if (Array.isArray(historyData)) return historyData;
+    if (typeof historyData === "object") return Object.values(historyData);
+    return [];
+}
 
 let studentData = {
     studentName: localStorage.getItem("studentName") || "Student",
     todayStudySeconds: Number(localStorage.getItem("todayStudySeconds")) || 0,
+    lastActiveDate: localStorage.getItem("lastStudyDate") || getTodayDateString(),
     focusSessions: Number(localStorage.getItem("focusSessions")) || 0,
+    focusSessionHistory: JSON.parse(localStorage.getItem("focusSessionHistory")) || [],
     dailyGoal: Number(localStorage.getItem("dailyGoal")) || 120,
     tasks: JSON.parse(localStorage.getItem("tasks")) || [],
     notifications: JSON.parse(localStorage.getItem("notifications")) || [],
+    capturedPhotos: JSON.parse(localStorage.getItem("capturedPhotos")) || [],
     chartLabels: JSON.parse(localStorage.getItem("chartLabels")) || [],
     chartData: JSON.parse(localStorage.getItem("chartData")) || [],
     deviceStatus: "Online",
     cameraActive: false,
     faceDetected: false,
-    aiStatus: "Initializing...",
+    aiStatus: "Loading AI Models...",
     lastSnapshot: "",
-    lastSnapshotTime: ""
+    lastSnapshotTime: "",
+    parentAlert: false,
+    parentAlertMessage: "",
+    parentAlertTime: ""
 };
 
-// --- GRAPH SETUP (STUDENT DASHBOARD) ---
+// --- LOAD FACE-API.JS MODELS ---
+async function loadFaceApiModels() {
+    try {
+        studentData.aiStatus = "Loading AI Models...";
+        updateUI();
+
+        await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
+        await faceapi.nets.faceLandmark68TinyNet.loadFromUri(MODEL_URL);
+        await faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL);
+
+        isModelsLoaded = true;
+        studentData.aiStatus = registeredDescriptor ? "AI Ready (Face Locked)" : "AI Ready (Face Not Locked)";
+        updateUI();
+        console.log("Face-API Models Loaded Successfully.");
+    } catch (err) {
+        console.error("Error loading face-api models:", err);
+        studentData.aiStatus = "⚠️ AI Model Load Error";
+        updateUI();
+    }
+}
+
+// --- REGISTER / LOCK STUDENT FACE ---
+async function resetRegisteredStudent() {
+    const videoEl = document.getElementById("webcamVideo");
+    
+    if (!videoEl || !isModelsLoaded || !studentData.cameraActive) {
+        alert("Camera active nahi hai ya AI Models load ho rahe hain. Kripya wait karein!");
+        return;
+    }
+
+    studentData.aiStatus = "Scanning Face Signature...";
+    updateUI();
+
+    try {
+        const detection = await faceapi.detectSingleFace(videoEl, new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.3 }))
+                                        .withFaceLandmarks(true)
+                                        .withFaceDescriptor();
+
+        if (detection) {
+            registeredDescriptor = Array.from(detection.descriptor);
+            localStorage.setItem("registeredFaceDescriptor", JSON.stringify(registeredDescriptor));
+            
+            studentData.aiStatus = "✅ Face Registered Successfully!";
+            pushCustomNotification("🔒 Registered Baseline Face Locked.");
+            captureAndUploadSnapshot("Face Registered");
+            syncToCloud();
+            updateUI();
+            alert("Aapka Face Baseline Successfully Save/Lock ho gaya hai!");
+        } else {
+            studentData.aiStatus = "⚠️ Face Not Detected";
+            updateUI();
+            alert("Face detect nahi ho paya. Camera ke samne seedhe dekhein aur dobara try karein!");
+        }
+    } catch (err) {
+        console.error("Face registration error:", err);
+        alert("Face signature capture karne me error aayi!");
+    }
+}
+
+// --- RECORD FOCUS SESSION DURATION ---
+function recordFocusSession(durationSecs) {
+    if (durationSecs < 5) {
+        currentSessionStartTime = null;
+        return;
+    }
+
+    const endTimeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
+    const startTimeStr = currentSessionStartTime || endTimeStr;
+    const timeRangeStr = `${startTimeStr} to ${endTimeStr}`;
+    
+    let mins = Math.max(1, Math.round(durationSecs / 60));
+    let durationStr = `${mins} min${mins > 1 ? 's' : ''}`;
+
+    const sessionEntry = {
+        id: Date.now(),
+        timeRange: timeRangeStr,
+        startTime: startTimeStr,
+        endTime: endTimeStr,
+        duration: durationStr,
+        date: getTodayDateString()
+    };
+
+    let historyArr = getCleanHistoryArray(studentData.focusSessionHistory);
+    historyArr.push(sessionEntry);
+    studentData.focusSessionHistory = historyArr;
+
+    localStorage.setItem("focusSessionHistory", JSON.stringify(studentData.focusSessionHistory));
+    db.ref("studentData/focusSessionHistory").set(studentData.focusSessionHistory);
+
+    currentSessionStartTime = null;
+}
+
+// --- DAILY MIDNIGHT AUTO-RESET LOGIC ---
+function checkDailyReset() {
+    const today = getTodayDateString();
+    const savedDate = localStorage.getItem("lastStudyDate");
+
+    if (!savedDate) {
+        localStorage.setItem("lastStudyDate", today);
+        studentData.lastActiveDate = today;
+        return;
+    }
+
+    if (savedDate !== today) {
+        studentData.todayStudySeconds = 0;
+        currentSessionSeconds = 0;
+        studentData.focusSessions = 0;
+        studentData.focusSessionHistory = [];
+        studentData.chartLabels = [];
+        studentData.chartData = [];
+
+        studentData.notifications = [];
+        studentData.parentAlert = false;
+        studentData.parentAlertMessage = "";
+        studentData.parentAlertTime = "";
+        lastAlertMinute = 0;
+
+        studentData.capturedPhotos = [];
+        studentData.lastSnapshot = "";
+        studentData.lastSnapshotTime = "";
+
+        if (studentData.tasks && studentData.tasks.length > 0) {
+            studentData.tasks.forEach(task => {
+                task.isCompleted = false;
+                task.wasWarned = false;
+                task.status = "upcoming";
+                task.date = today;
+            });
+        }
+
+        studentData.lastActiveDate = today;
+
+        if (studyChart) {
+            studyChart.data.labels = ['Start'];
+            studyChart.data.datasets[0].data = [0];
+            studyChart.update();
+        }
+
+        localStorage.setItem("lastStudyDate", today);
+        localStorage.setItem("todayStudySeconds", "0");
+        localStorage.setItem("focusSessions", "0");
+        localStorage.setItem("focusSessionHistory", "[]");
+        localStorage.setItem("notifications", "[]");
+        localStorage.setItem("capturedPhotos", "[]");
+        localStorage.setItem("tasks", JSON.stringify(studentData.tasks));
+
+        updateUI();
+        syncToCloud();
+    }
+}
+
+// --- GRAPH SETUP ---
 function initStudentChart() {
     const ctx = document.getElementById('studentStudyChart');
     if (!ctx) return;
@@ -82,7 +270,7 @@ function updateGraphPoints() {
     studentData.chartLabels.push(timeLabel);
     studentData.chartData.push(currentMins);
 
-    if (studentData.chartLabels.length > 10) {
+    if (studentData.chartLabels.length > 20) {
         studentData.chartLabels.shift();
         studentData.chartData.shift();
     }
@@ -94,9 +282,12 @@ function updateGraphPoints() {
     }
 }
 
-// --- WEBCAM & CONTINUOUS TRACKING ---
+// --- WEBCAM & CONTINUOUS AI FACE MATCHING ---
 async function startWebcam() {
     const videoEl = document.getElementById("webcamVideo");
+    const errDiv = document.getElementById("camErrorMsg");
+
+    if (!videoEl) return;
 
     try {
         const stream = await navigator.mediaDevices.getUserMedia({ 
@@ -105,17 +296,18 @@ async function startWebcam() {
         });
         
         webcamStream = stream;
-        if (videoEl) {
-            videoEl.srcObject = stream;
-            videoEl.play();
-        }
+        videoEl.srcObject = stream;
+        await videoEl.play();
+        
+        if (errDiv) errDiv.style.display = "none";
+        videoEl.style.display = "block";
         
         studentData.cameraActive = true;
-        studentData.aiStatus = "Present / Focused";
-        initContinuousFaceTracker();
         
+        startContinuousFaceVerification();
+
         setTimeout(() => {
-            captureAndUploadSnapshot();
+            captureAndUploadSnapshot("Session Started");
         }, 2000);
 
     } catch (err) {
@@ -123,172 +315,227 @@ async function startWebcam() {
         studentData.cameraActive = false;
         studentData.faceDetected = false;
         studentData.aiStatus = "⚠️ Camera Off";
+        if (errDiv) errDiv.style.display = "block";
         syncToCloud();
     }
 }
 
-function initContinuousFaceTracker() {
-    if (typeof tracking !== "undefined") {
-        try {
-            const tracker = new tracking.ObjectTracker('face');
-            tracker.setInitialScale(2.5);
-            tracker.setStepSize(1.5);
-            tracker.setEdgesDensity(0.08);
+function startContinuousFaceVerification() {
+    if (aiLoopInterval) clearInterval(aiLoopInterval);
 
-            if (trackerTask) trackerTask.stop();
-            trackerTask = tracking.track('#webcamVideo', tracker);
-
-            tracker.on('track', function(event) {
-                let previousStatus = studentData.faceDetected;
-
-                if (event.data && event.data.length > 0) {
-                    studentData.faceDetected = true;
-                    studentData.aiStatus = "Present / Focused";
-                    gracePeriodCounter = 0;
-                } else {
-                    checkHeadTiltOrPresence();
-                }
-
-                // Fast Realtime Status Push if changed
-                if (previousStatus !== studentData.faceDetected) {
-                    db.ref("studentData").update({
-                        faceDetected: studentData.faceDetected,
-                        aiStatus: studentData.aiStatus,
-                        cameraActive: studentData.cameraActive
-                    });
-                }
-            });
-            return;
-        } catch(e) {
-            console.log("Tracking library issue, using video stream frame analyzer fallback.");
-        }
-    }
-
-    setInterval(() => {
-        analyzeVideoStreamLive();
-    }, 300);
+    aiLoopInterval = setInterval(async () => {
+        await processFaceFrame();
+    }, 600);
 }
 
-function checkHeadTiltOrPresence() {
+// --- PROCESS FACE FRAME (FIXED FALSE AWAY WHEN READING/WRITING) ---
+async function processFaceFrame() {
     const videoEl = document.getElementById("webcamVideo");
-    const canvasEl = document.getElementById("snapshotCanvas");
-    
-    if (!videoEl || videoEl.paused || !studentData.cameraActive) {
+
+    if (!videoEl || videoEl.paused || videoEl.ended || !studentData.cameraActive || !isModelsLoaded) {
         studentData.faceDetected = false;
-        studentData.aiStatus = "Away / Distracted";
         return;
     }
 
     try {
-        const ctx = canvasEl.getContext("2d");
-        canvasEl.width = 160;
-        canvasEl.height = 120;
-        ctx.drawImage(videoEl, 0, 0, 160, 120);
+        // Reduced scoreThreshold to 0.3 to better catch tilted/downward faces
+        const detection = await faceapi.detectSingleFace(videoEl, new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.3 }))
+                                        .withFaceLandmarks(true)
+                                        .withFaceDescriptor();
 
-        const imgData = ctx.getImageData(30, 20, 100, 80).data;
-        let pixelActivity = 0;
+        if (detection) {
+            gracePeriodCounter = 0;
 
-        for (let i = 0; i < imgData.length; i += 4) {
-            let avg = (imgData[i] + imgData[i+1] + imgData[i+2]) / 3;
-            if (avg > 20) pixelActivity++;
-        }
-
-        if (pixelActivity > 1500) {
-            gracePeriodCounter++;
-            if (gracePeriodCounter <= MAX_GRACE_TICKS) {
+            if (registeredDescriptor) {
+                const distance = faceapi.euclideanDistance(detection.descriptor, registeredDescriptor);
+                
+                if (distance < 0.60) {
+                    studentData.faceDetected = true;
+                    studentData.aiStatus = "Present / Verified";
+                } else {
+                    studentData.faceDetected = false;
+                    studentData.aiStatus = "⚠️ Mismatch / Unknown Person";
+                }
+            } else {
                 studentData.faceDetected = true;
-                studentData.aiStatus = "Present / Focused";
-                return;
+                studentData.aiStatus = "Present (Lock Face Suggested)";
+            }
+        } else {
+            // Sir neeche hone par ya camera se thoda hatne par Buffer Period chalega
+            gracePeriodCounter++;
+
+            if (gracePeriodCounter < MAX_GRACE_TICKS) {
+                // Buffer Period me false Away nahi dikhaega aur timer chalta rahega
+                studentData.faceDetected = true;
+                studentData.aiStatus = "📖 Reading / Writing (Head Down)";
+            } else {
+                // Agar sach me continuous ~20 seconds tak koi chehra nahi mila
+                studentData.faceDetected = false;
+                studentData.aiStatus = "Away / Distracted";
             }
         }
-    } catch (e) {
-        console.error("Head tilt calculation error:", e);
-    }
 
-    studentData.faceDetected = false;
-    studentData.aiStatus = "Away / Distracted";
+        db.ref("studentData").update({
+            faceDetected: studentData.faceDetected,
+            aiStatus: studentData.aiStatus,
+            cameraActive: studentData.cameraActive
+        });
+
+    } catch (err) {
+        console.error("AI Face processing error:", err);
+    }
 }
 
-function analyzeVideoStreamLive() {
-    const videoEl = document.getElementById("webcamVideo");
-    if (!videoEl || videoEl.paused || videoEl.ended || !studentData.cameraActive) {
-        studentData.faceDetected = false;
-        studentData.aiStatus = "Away / Distracted";
-        db.ref("studentData").update({
-            faceDetected: false,
-            aiStatus: "Away / Distracted"
-        });
+// --- DYNAMIC PRESENCE MONITOR ---
+function monitorStudentPresence1Min() {
+    if (!isRunning) {
+        awayStartTime = null;
+        lastAlertMinute = 0;
         return;
     }
 
-    const tracks = webcamStream ? webcamStream.getVideoTracks() : [];
-    if (tracks.length === 0 || !tracks[0].enabled || tracks[0].readyState !== "live") {
-        studentData.faceDetected = false;
-        studentData.aiStatus = "⚠️ Camera Off";
-        db.ref("studentData").update({
-            faceDetected: false,
-            aiStatus: "⚠️ Camera Off",
-            cameraActive: false
-        });
-        return;
-    }
+    const isAway = !studentData.faceDetected || !studentData.cameraActive;
 
-    db.ref("studentData").update({
-        faceDetected: studentData.faceDetected,
-        aiStatus: studentData.aiStatus
-    });
+    if (isAway) {
+        if (!awayStartTime) awayStartTime = Date.now();
+
+        const elapsedSeconds = Math.floor((Date.now() - awayStartTime) / 1000);
+        const elapsedMinutes = Math.floor(elapsedSeconds / 60);
+
+        if (elapsedMinutes >= 1 && elapsedMinutes > lastAlertMinute) {
+            lastAlertMinute = elapsedMinutes;
+            studentData.parentAlert = true;
+
+            const alertText = `🚨 PARENT ALERT: Student desk par nahi hai / Mismatch (${elapsedMinutes} min)!`;
+            const alertTimeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+            studentData.parentAlertMessage = alertText;
+            studentData.parentAlertTime = alertTimeStr;
+
+            captureAndUploadSnapshot(`🚨 Away Alert (${elapsedMinutes} min)`);
+            pushCustomNotification(alertText);
+
+            db.ref("studentData").update({
+                parentAlert: true,
+                parentAlertMessage: alertText,
+                parentAlertTime: alertTimeStr,
+                notifications: studentData.notifications
+            });
+        }
+    } else {
+        if (awayStartTime || lastAlertMinute > 0 || studentData.parentAlert) {
+            awayStartTime = null;
+            lastAlertMinute = 0;
+            studentData.parentAlert = false;
+            studentData.parentAlertMessage = "";
+            studentData.parentAlertTime = "";
+
+            pushCustomNotification("🟢 Student desk par wapas aa gaya hai.");
+
+            db.ref("studentData").update({
+                parentAlert: false,
+                parentAlertMessage: "",
+                parentAlertTime: "",
+                notifications: studentData.notifications
+            });
+        }
+    }
 }
 
-// --- SNAPSHOT & CLOUD SYNC ---
-function captureAndUploadSnapshot() {
+// --- SNAPSHOT UPLOAD ---
+function captureAndUploadSnapshot(reason = "Periodic Snapshot") {
     const videoEl = document.getElementById("webcamVideo");
-    const canvasEl = document.getElementById("snapshotCanvas");
-    if (!videoEl || !canvasEl) return;
+    let canvasEl = document.getElementById("snapshotCanvas");
 
-    const ctx = canvasEl.getContext("2d");
-    canvasEl.width = 320;
-    canvasEl.height = 240;
+    if (!canvasEl) {
+        canvasEl = document.createElement("canvas");
+        canvasEl.id = "snapshotCanvas";
+        canvasEl.style.display = "none";
+        document.body.appendChild(canvasEl);
+    }
 
-    ctx.drawImage(videoEl, 0, 0, canvasEl.width, canvasEl.height);
-    
-    const photoBase64 = canvasEl.toDataURL("image/jpeg", 0.3);
+    if (!videoEl || videoEl.paused || videoEl.ended || videoEl.readyState < 2) return;
 
-    studentData.lastSnapshot = photoBase64;
-    studentData.lastSnapshotTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    try {
+        const ctx = canvasEl.getContext("2d");
+        canvasEl.width = 240;
+        canvasEl.height = 180;
 
-    syncToCloud();
+        ctx.drawImage(videoEl, 0, 0, canvasEl.width, canvasEl.height);
+        
+        const photoBase64 = canvasEl.toDataURL("image/jpeg", 0.3);
+        const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+        studentData.lastSnapshot = photoBase64;
+        studentData.lastSnapshotTime = timeStr;
+
+        if (!studentData.capturedPhotos) studentData.capturedPhotos = [];
+        
+        studentData.capturedPhotos.push({
+            image: photoBase64,
+            timestamp: timeStr,
+            reason: reason
+        });
+
+        if (studentData.capturedPhotos.length > 3) {
+            studentData.capturedPhotos.shift();
+        }
+
+        localStorage.setItem("capturedPhotos", JSON.stringify(studentData.capturedPhotos));
+
+        db.ref("studentData").update({
+            lastSnapshot: photoBase64,
+            lastSnapshotTime: timeStr,
+            capturedPhotos: studentData.capturedPhotos
+        });
+
+    } catch (err) {
+        console.error("Snapshot error:", err);
+    }
 }
 
 function syncToCloud() {
-    localStorage.setItem("studentName", studentData.studentName);
-    localStorage.setItem("todayStudySeconds", studentData.todayStudySeconds);
-    localStorage.setItem("focusSessions", studentData.focusSessions);
-    localStorage.setItem("dailyGoal", studentData.dailyGoal);
-    localStorage.setItem("tasks", JSON.stringify(studentData.tasks));
-    localStorage.setItem("notifications", JSON.stringify(studentData.notifications));
-    localStorage.setItem("chartLabels", JSON.stringify(studentData.chartLabels));
-    localStorage.setItem("chartData", JSON.stringify(studentData.chartData));
+    try {
+        localStorage.setItem("studentName", studentData.studentName);
+        localStorage.setItem("todayStudySeconds", studentData.todayStudySeconds);
+        localStorage.setItem("lastStudyDate", studentData.lastActiveDate);
+        localStorage.setItem("focusSessions", studentData.focusSessions);
+        localStorage.setItem("focusSessionHistory", JSON.stringify(studentData.focusSessionHistory || []));
+        localStorage.setItem("dailyGoal", studentData.dailyGoal);
+        localStorage.setItem("tasks", JSON.stringify(studentData.tasks));
+        localStorage.setItem("notifications", JSON.stringify(studentData.notifications));
+        localStorage.setItem("capturedPhotos", JSON.stringify(studentData.capturedPhotos));
+        localStorage.setItem("chartLabels", JSON.stringify(studentData.chartLabels));
+        localStorage.setItem("chartData", JSON.stringify(studentData.chartData));
 
-    db.ref("studentData").set(studentData);
+        db.ref("studentData").update(studentData);
+    } catch(e) {
+        console.error("Sync error:", e);
+    }
 }
 
 // --- TIMER CONTROLS ---
 function startTimer() {
     if (isRunning) return;
-    isRunning = true;
+    
+    if (!currentSessionStartTime) {
+        currentSessionStartTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
+    }
 
-    captureAndUploadSnapshot();
+    isRunning = true;
+    awayStartTime = null;
+
+    checkDailyReset();
+    captureAndUploadSnapshot("Timer Started");
+    updateUI();
 
     timerInterval = setInterval(() => {
+        checkDailyReset();
+        currentSessionSeconds++;
         studentData.todayStudySeconds++;
 
-        if (studentData.todayStudySeconds % 10 === 0) {
-            captureAndUploadSnapshot();
-
-            if (!studentData.faceDetected || !studentData.cameraActive) {
-                pushAwayNotification();
-            }
-
+        if (studentData.todayStudySeconds % 60 === 0) {
+            captureAndUploadSnapshot("Study Snapshot");
             updateGraphPoints();
         }
 
@@ -300,31 +547,13 @@ function startTimer() {
     }, 1000);
 }
 
-function pushAwayNotification() {
-    const notifMsg = "⚠️ Alert: Student away from desk during study session!";
-    const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-
-    const newNotif = {
-        id: Date.now(),
-        message: notifMsg,
-        time: timeStr
-    };
-
-    if (!studentData.notifications) studentData.notifications = [];
-    studentData.notifications.push(newNotif);
-
-    if (studentData.notifications.length > 10) studentData.notifications.shift();
-
-    db.ref("studentData/notifications").set(studentData.notifications);
-}
-
 function pauseTimer() {
     if (!isRunning) return;
     isRunning = false;
+    awayStartTime = null;
     clearInterval(timerInterval);
 
-    studentData.focusSessions++;
-    pushCustomNotification(`Session Paused. Focus Sessions: ${studentData.focusSessions}`);
+    pushCustomNotification(`Session Paused`);
     updateUI();
     syncToCloud();
 }
@@ -334,14 +563,20 @@ function resetTimer() {
         isRunning = false;
         clearInterval(timerInterval);
     }
-    studentData.todayStudySeconds = 0;
-    studentData.chartLabels = [];
-    studentData.chartData = [];
-    if (studyChart) {
-        studyChart.data.labels = ['Start'];
-        studyChart.data.datasets[0].data = [0];
-        studyChart.update();
+    
+    awayStartTime = null;
+
+    if (currentSessionSeconds >= 5) {
+        studentData.focusSessions++;
+        recordFocusSession(currentSessionSeconds);
+        updateGraphPoints();
+        pushCustomNotification(`Session Completed! Total Focus Sessions: ${studentData.focusSessions}`);
+    } else {
+        currentSessionStartTime = null;
     }
+
+    currentSessionSeconds = 0;
+    
     updateUI();
     syncToCloud();
 }
@@ -354,15 +589,21 @@ function pushCustomNotification(msg) {
     };
     if (!studentData.notifications) studentData.notifications = [];
     studentData.notifications.push(notif);
+    localStorage.setItem("notifications", JSON.stringify(studentData.notifications));
     db.ref("studentData/notifications").set(studentData.notifications);
 }
 
-// --- TASK MANAGERS (WITH DATE SUPPORT) ---
+// --- TASK MANAGERS ---
 function createNewTask() {
-    const name = document.getElementById("taskNameInput").value;
-    const dateInput = document.getElementById("taskDateInput") ? document.getElementById("taskDateInput").value : "";
-    const start = document.getElementById("taskStartTimeInput").value;
-    const end = document.getElementById("taskEndTimeInput").value;
+    const nameEl = document.getElementById("taskNameInput");
+    const dateEl = document.getElementById("taskDateInput");
+    const startEl = document.getElementById("taskStartTimeInput");
+    const endEl = document.getElementById("taskEndTimeInput");
+
+    const name = nameEl ? nameEl.value : "";
+    const dateInput = dateEl ? dateEl.value : "";
+    const start = startEl ? startEl.value : "";
+    const end = endEl ? endEl.value : "";
 
     if (!name || name.trim() === "") {
         alert("Please enter a task name!");
@@ -372,7 +613,7 @@ function createNewTask() {
     const newTask = {
         id: Date.now(),
         name: name.trim(),
-        date: dateInput || new Date().toISOString().split('T')[0], // Exact Calendar Date
+        date: dateInput || getTodayDateString(),
         startTime: start || "00:00",
         endTime: end || "23:59",
         isCompleted: false,
@@ -383,10 +624,12 @@ function createNewTask() {
     studentData.tasks.push(newTask);
     pushCustomNotification(`New Task Added: "${name}"`);
 
-    document.getElementById("taskNameInput").value = "";
-    if (document.getElementById("taskDateInput")) document.getElementById("taskDateInput").value = "";
-    document.getElementById("taskStartTimeInput").value = "";
-    document.getElementById("taskEndTimeInput").value = "";
+    if (nameEl) nameEl.value = "";
+    if (dateEl) dateEl.value = "";
+    if (startEl) startEl.value = "";
+    if (endEl) endEl.value = "";
+    
+    updateTaskDynamicStatuses();
     updateUI();
     syncToCloud();
 }
@@ -403,11 +646,11 @@ function updateTaskDynamicStatuses() {
         const [startH, startM] = task.startTime.split(':').map(Number);
         const [endH, endM] = task.endTime.split(':').map(Number);
 
-        const taskStart = new Date(task.date || Date.now());
-        taskStart.setHours(startH, startM, 0, 0);
+        const taskDateStr = task.date || getTodayDateString();
+        const [year, month, day] = taskDateStr.split('-').map(Number);
 
-        const taskEnd = new Date(task.date || Date.now());
-        taskEnd.setHours(endH, endM, 0, 0);
+        const taskStart = new Date(year, month - 1, day, startH, startM, 0, 0);
+        const taskEnd = new Date(year, month - 1, day, endH, endM, 0, 0);
 
         if (now < taskStart) {
             task.status = "upcoming";
@@ -428,8 +671,9 @@ function toggleTaskComplete(id) {
     const task = studentData.tasks.find(t => t.id === id);
     if (task) {
         task.isCompleted = !task.isCompleted;
-        task.status = task.isCompleted ? "completed" : "upcoming";
-        pushCustomNotification(`Task "${task.name}" status updated to ${task.status.toUpperCase()}`);
+        updateTaskDynamicStatuses();
+        const status = normalizeTaskStatus(task.status);
+        pushCustomNotification(`Task "${task.name}" status updated to ${status.toUpperCase()}`);
         updateUI();
         syncToCloud();
     }
@@ -456,30 +700,34 @@ function closeModal() {
 }
 
 function saveProfile() {
-    const nameInput = document.getElementById("inputStudentName").value;
-    const goalInput = document.getElementById("inputDailyGoal").value;
+    const nameInput = document.getElementById("inputStudentName") ? document.getElementById("inputStudentName").value : "";
+    const goalInput = document.getElementById("inputDailyGoal") ? document.getElementById("inputDailyGoal").value : "";
 
     if (nameInput && nameInput.trim() !== "") studentData.studentName = nameInput.trim();
     if (goalInput && Number(goalInput) > 0) studentData.dailyGoal = Number(goalInput);
 
-    document.getElementById("inputStudentName").value = "";
-    document.getElementById("inputDailyGoal").value = "";
+    if (document.getElementById("inputStudentName")) document.getElementById("inputStudentName").value = "";
+    if (document.getElementById("inputDailyGoal")) document.getElementById("inputDailyGoal").value = "";
+    
     updateUI();
     syncToCloud();
 }
 
-// --- RENDER UI (WITH CALENDAR DATE RENDER) ---
+// --- RENDER UI ---
 function updateUI() {
-    updateTaskDynamicStatuses();
+    let sHrs = Math.floor(currentSessionSeconds / 3600);
+    let sMins = Math.floor((currentSessionSeconds % 3600) / 60);
+    let sSecs = currentSessionSeconds % 60;
+    let sessionDisplay = String(sHrs).padStart(2, "0") + ":" + String(sMins).padStart(2, "0") + ":" + String(sSecs).padStart(2, "0");
 
-    let hrs = Math.floor(studentData.todayStudySeconds / 3600);
-    let mins = Math.floor((studentData.todayStudySeconds % 3600) / 60);
-    let secs = studentData.todayStudySeconds % 60;
+    let tHrs = Math.floor(studentData.todayStudySeconds / 3600);
+    let tMins = Math.floor((studentData.todayStudySeconds % 3600) / 60);
+    let tSecs = studentData.todayStudySeconds % 60;
+    let todayDisplay = String(tHrs).padStart(2, "0") + ":" + String(tMins).padStart(2, "0") + ":" + String(tSecs).padStart(2, "0");
 
-    let display = String(hrs).padStart(2, "0") + ":" + String(mins).padStart(2, "0") + ":" + String(secs).padStart(2, "0");
-
-    if (document.getElementById("timer")) document.getElementById("timer").innerText = display;
-    if (document.getElementById("todayStudyTime")) document.getElementById("todayStudyTime").innerText = display;
+    if (document.getElementById("timer")) document.getElementById("timer").innerText = sessionDisplay;
+    if (document.getElementById("todayStudyTime")) document.getElementById("todayStudyTime").innerText = todayDisplay;
+    
     if (document.getElementById("focusSessions")) document.getElementById("focusSessions").innerText = studentData.focusSessions + " Sessions";
     if (document.getElementById("displayName")) document.getElementById("displayName").innerText = studentData.studentName;
     if (document.getElementById("studentCardName")) document.getElementById("studentCardName").innerText = studentData.studentName;
@@ -491,6 +739,42 @@ function updateUI() {
     if (document.getElementById("progressFill")) document.getElementById("progressFill").style.width = pct + "%";
     if (document.getElementById("progressText")) document.getElementById("progressText").innerText = pct + "% Completed";
 
+    // --- RENDER FOCUS SESSION TIMESTAMPS ---
+    const studentFocusList = document.getElementById("studentFocusSessionsList");
+    if (studentFocusList) {
+        let historyArray = getCleanHistoryArray(studentData.focusSessionHistory);
+
+        let html = "";
+
+        if (isRunning && currentSessionStartTime) {
+            let nowTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
+            let activeMins = Math.max(1, Math.round(currentSessionSeconds / 60));
+            html += `
+                <div style="padding: 6px; margin-bottom: 4px; background: rgba(37, 99, 235, 0.15); border-left: 3px solid #2563eb; border-radius: 4px; color: #60a5fa; font-size: 12px;">
+                    ▶ <b>Ongoing Session:</b> ${currentSessionStartTime} to ${nowTime} <span style="font-weight:bold;">(${activeMins} min)</span>
+                </div>
+            `;
+        }
+
+        if (historyArray.length === 0 && !isRunning) {
+            html = "<p style='color:#64748b; font-size: 12px;'>No focus sessions logged today.</p>";
+        } else {
+            html += historyArray.slice().reverse().map((item, index) => {
+                const sessionNum = historyArray.length - index;
+                const timeText = item.timeRange || (item.startTime && item.endTime ? `${item.startTime} to ${item.endTime}` : "Completed");
+                const durationText = item.duration ? ` (${item.duration})` : '';
+                return `
+                    <div style="padding: 4px 0; border-bottom: 1px solid #1e293b; color: #cbd5e1; font-size: 12px;">
+                        ⏱ <b>Session ${sessionNum}:</b> ${timeText} <span style="color:#16a34a; font-weight:bold;">${durationText}</span>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        studentFocusList.innerHTML = html;
+    }
+
+    // --- RENDER TASKS ---
     const list = document.getElementById("taskList");
     if (list) {
         if (!studentData.tasks || studentData.tasks.length === 0) {
@@ -499,7 +783,8 @@ function updateUI() {
             list.innerHTML = "";
             studentData.tasks.forEach(task => {
                 let item = document.createElement("div");
-                item.className = "task-item " + task.status;
+                const status = normalizeTaskStatus(task.status);
+                item.className = "task-item " + status;
                 item.innerHTML = `
                     <div style="flex: 1;">
                         <strong>📚 ${task.name}</strong><br>
@@ -519,9 +804,33 @@ function updateUI() {
     }
 }
 
-document.addEventListener("DOMContentLoaded", () => {
+// --- EXPOSE FUNCTIONS TO GLOBAL WINDOW OBJECT ---
+window.startTimer = startTimer;
+window.pauseTimer = pauseTimer;
+window.resetTimer = resetTimer;
+window.startWebcam = startWebcam;
+window.resetRegisteredStudent = resetRegisteredStudent;
+window.createNewTask = createNewTask;
+window.toggleTaskComplete = toggleTaskComplete;
+window.deleteTask = deleteTask;
+window.saveProfile = saveProfile;
+window.closeModal = closeModal;
+
+// --- INITIALIZATION ---
+document.addEventListener("DOMContentLoaded", async () => {
+    checkDailyReset();
     initStudentChart();
+    updateTaskDynamicStatuses();
     updateUI();
     syncToCloud();
-    startWebcam();
+
+    await loadFaceApiModels();
+    await startWebcam();
+
+    setInterval(() => {
+        checkDailyReset();
+        updateTaskDynamicStatuses();
+        monitorStudentPresence1Min();
+        updateUI();
+    }, 1000);
 });
