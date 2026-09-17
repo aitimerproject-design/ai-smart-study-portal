@@ -1,21 +1,14 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <!-- Google MediaPipe AI Face Detection -->
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/face_detection.js" crossorigin="anonymous"></script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Student Dashboard - Study Portal</title>
+    <title>Parent Portal - Live Monitoring</title>
     <link rel="stylesheet" href="style.css">
     
-    <!-- Firebase SDKs -->
-    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
-
-    <!-- Face Detection Library (tracking.js) -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/tracking.js/1.1.3/tracking-min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/tracking.js/1.1.3/data/face-min.js"></script>
+    <!-- Firebase SDKs (v8 Compat Version) -->
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
 
     <!-- Chart.js Library -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -25,125 +18,100 @@
     <div class="container">
         <!-- HEADER -->
         <header class="header">
-            <h1>🎓 Student Study Portal</h1>
-            <p>Smart Time Management & Task Tracker</p>
-            <div class="status">🟢 Active Student Session</div>
+            <h1>👨‍👩‍👧 Parent Dashboard</h1>
+            <p>Live Realtime Student Monitoring & AI Status</p>
+            <div class="status" id="parentDeviceStatus">🟢 Live Monitoring Active</div>
         </header>
 
-        <!-- PROFILE & SETTINGS -->
-        <div class="card">
-            <h2>👤 Student Profile</h2>
-            <div style="display: flex; gap: 15px; flex-wrap: wrap; align-items: center;">
-                <input type="text" id="inputStudentName" placeholder="Enter Your Name">
-                <input type="number" id="inputDailyGoal" placeholder="Daily Goal (Minutes)">
-                <button class="save" onclick="saveProfile()">Save Profile</button>
-            </div>
-            <p style="margin-top: 10px; color: #64748b;">Current Name: <strong id="displayName">Student</strong> | Goal: <strong id="displayGoal">120</strong> mins</p>
-        </div>
+        <!-- LIVE ALERT BANNER -->
+        <div id="parentAlertBanner" style="display: none; transition: all 0.3s ease; margin-bottom: 20px;"></div>
 
         <!-- DASHBOARD METRICS -->
         <div class="dashboard">
             <div class="card">
                 <h3>👤 Student Name</h3>
-                <p id="studentCardName">Student</p>
+                <p id="parentStudentName">Loading...</p>
             </div>
             <div class="card">
                 <h3>⏱ Today's Study Time</h3>
-                <p id="todayStudyTime">00:00:00</p>
+                <p id="parentStudyTime">00:00:00</p>
             </div>
             <div class="card">
                 <h3>🔥 Focus Sessions</h3>
-                <p id="focusSessions">0 Sessions</p>
+                <p id="parentFocusSessions">0 Sessions</p>
+            </div>
+            <div class="card" style="border: 1px solid var(--accent-blue); background: rgba(15, 23, 42, 0.8);">
+                <h3>🤖 AI Face Status</h3>
+                <p id="parentAIFaceStatusText" style="color: var(--accent-green); font-weight: bold; font-size: 1.2rem;">Checking...</p>
             </div>
         </div>
 
-        <!-- WEBCAM SECTION (Connected with Python Flask Stream) -->
+        <!-- LIVE CAMERA SNAPSHOT -->
         <div class="card" style="text-align: center;">
-            <h2>📷 Live AI Study Camera</h2>
-            <div style="position: relative; display: inline-block; border-radius: 12px; overflow: hidden; border: 2px solid #334155; background: #0f172a; max-width: 100%; width: 480px; min-height: 270px;">
-                
-                <!-- Python AI Flask Camera Feed -->
-                <img id="webcamVideo" 
-                     src="http://localhost:5000/video_feed" 
-                     alt="Live AI Camera Stream" 
-                     style="width: 100%; max-width: 480px; height: auto; display: block;"
-                     onerror="this.style.display='none'; document.getElementById('camErrorMsg').style.display='block';">
-
-                <canvas id="snapshotCanvas" style="display: none;"></canvas>
-
-                <!-- Offline Message (Agar Python Script Off Ho) -->
-                <div id="camErrorMsg" style="display: none; padding: 30px 15px; color: #ef4444; font-size: 14px;">
-                    <p style="font-size: 16px; font-weight: bold; margin-bottom: 5px;">⚠️ Live Camera Offline</p>
-                    <p style="color: #94a3b8; font-size: 13px;">Terminal mein <code>python tracker.py</code> chalaayein.</p>
-                </div>
+            <h2>📸 Latest Camera Snapshot</h2>
+            <div style="margin: 15px auto; max-width: 320px; border-radius: 16px; overflow: hidden; border: 1px solid var(--border-card); background: rgba(15, 23, 42, 0.6); min-height: 240px; display: flex; align-items: center; justify-content: center;">
+                <img id="parentSnapshotImg" src="" alt="Live Student Snapshot" style="width: 100%; height: auto; display: none; border-radius: 12px;">
+                <p id="noSnapshotText" style="color: var(--text-muted); padding: 20px;">Waiting for camera snapshot...</p>
             </div>
-            <div style="margin-top: 10px;">
-                <button class="start" style="padding: 6px 15px; font-size: 13px;" onclick="startWebcam()">🎥 Restart Camera</button>
-            </div>
+            <p style="color: var(--text-muted); font-size: 14px;">Last Captured Time: <strong id="parentSnapshotTime" style="color: var(--text-main);">--:--</strong></p>
         </div>
 
-        <!-- MAIN TIMER SECTION -->
-        <div class="card timer-card">
-            <h2>⏱️ Focus Timer</h2>
-            <div id="timer">00:00:00</div>
-            <div class="buttons">
-                <button class="start" onclick="startTimer()">▶ Start</button>
-                <button class="pause" onclick="pauseTimer()">⏸ Pause</button>
-                <button class="reset" onclick="resetTimer()">🔄 Reset</button>
-            </div>
-        </div>
-
-        <!-- GOAL PROGRESS BAR -->
+        <!-- CAPTURED PHOTO GALLERY HISTORY -->
         <div class="card">
-            <h2>🎯 Today's Goal Progress</h2>
-            <div class="progress-bar">
-                <div class="progress-fill" id="progressFill" style="width: 0%;"></div>
+            <h2>🖼 Captured Photos Gallery</h2>
+            <div id="parentPhotoGallery" style="display: flex; gap: 10px; overflow-x: auto; padding: 10px 0; min-height: 100px;">
+                <p style="color: var(--text-muted); font-size: 13px;">No captured photos yet.</p>
             </div>
-            <p id="progressText" style="text-align: center; margin-top: 10px; font-weight: bold;">0% Completed</p>
+        </div>
+
+        <!-- TODAY'S FOCUS SESSION LOGS -->
+        <div class="card">
+            <h2>📋 Today's Session Timestamps</h2>
+            <div id="parentFocusSessionsList" style="max-height: 180px; overflow-y: auto; padding: 5px;">
+                <p style="color: var(--text-muted); font-size: 13px;">No focus sessions logged today.</p>
+            </div>
+        </div>
+
+        <!-- GOAL PROGRESS -->
+        <div class="card">
+            <h2>🎯 Daily Study Goal Progress</h2>
+            <div class="progress-bar">
+                <div class="progress-fill" id="parentProgressFill" style="width: 0%;"></div>
+            </div>
+            <p id="parentProgressText">0% Completed</p>
         </div>
 
         <!-- REALTIME STUDY GRAPH -->
         <div class="card">
-            <h2>📊 Realtime Study Activity Graph</h2>
-            <div class="chart-wrapper" style="position: relative; height: 300px;">
-                <canvas id="studentStudyChart"></canvas>
+            <h2>📊 Live Student Study Activity Graph</h2>
+            <div class="chart-wrapper">
+                <canvas id="parentStudyChart"></canvas>
             </div>
         </div>
 
-        <!-- TASK MANAGEMENT -->
+        <!-- TASKS STATUS -->
         <div class="card">
-            <h2>📅 Task Manager</h2>
-            <div style="display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 15px; align-items: center;">
-                <input type="text" id="taskNameInput" placeholder="Task Name (e.g. Physics Revision)" style="flex: 2; min-width: 200px;">
-                
-                <!-- CALENDAR DATE PICKER -->
-                <input type="date" id="taskDateInput" style="flex: 1; min-width: 130px;">
-                
-                <input type="time" id="taskStartTimeInput" style="flex: 1; min-width: 100px;">
-                <input type="time" id="taskEndTimeInput" style="flex: 1; min-width: 100px;">
-                <button class="save" onclick="createNewTask()" style="padding: 10px 20px;">➕ Add Task</button>
+            <h2>📅 Assigned Tasks & Progress</h2>
+            <div id="parentTaskList">
+                <p style="color: var(--text-muted);">No active tasks.</p>
             </div>
+        </div>
 
-            <div id="taskList">
-                <p style="color:#64748b;">No tasks added yet.</p>
+        <!-- ALERT & NOTIFICATION LOGS -->
+        <div class="card">
+            <h2>🔔 Live Alerts & Logs</h2>
+            <div id="parentNotificationList" style="max-height: 200px; overflow-y: auto;">
+                <p style="color: var(--text-muted);">No recent alerts.</p>
             </div>
         </div>
 
         <!-- FOOTER -->
         <footer>
-            <p>Student Dashboard 🚀</p>
+            <p>Parent Dashboard Portal 🚀</p>
         </footer>
     </div>
 
-    <!-- MISSED TASK WARNING MODAL -->
-    <div class="missed-popup" id="warningModal" style="display: none;">
-        <div class="popup-box">
-            <h2>⚠️ Task Missed!</h2>
-            <p id="modalMsg" style="color: #475569; margin: 15px 0;">You missed a scheduled task!</p>
-            <button class="reset" onclick="closeModal()">Dismiss</button>
-        </div>
-    </div>
-
-    <script src="script.js"></script>
+    <!-- PARENT ENGINE JS -->
+    <script src="parent.js"></script>
 </body>
 </html>
